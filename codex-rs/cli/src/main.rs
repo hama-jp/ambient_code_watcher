@@ -11,6 +11,7 @@ use codex_cli::login::run_login_status;
 use codex_cli::login::run_login_with_api_key;
 use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_logout;
+use codex_cli::ambient;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
 use codex_exec::Cli as ExecCli;
@@ -19,7 +20,6 @@ use std::path::PathBuf;
 
 use crate::proto::ProtoCli;
 
-mod ambient;
 
 /// Codex CLI
 ///
