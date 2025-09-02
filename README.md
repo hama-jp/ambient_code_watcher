@@ -52,7 +52,9 @@ ollama pull gpt-oss:20b
 
 ```bash
 # インストール
-./install.sh
+./install.sh　
+# ビルドにちょっと時間かかります。
+
 
 # アンインストール
 ./uninstall.sh

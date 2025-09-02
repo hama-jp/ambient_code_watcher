@@ -42,6 +42,16 @@ h1 {
     gap: 0.5rem;
 }
 
+#project-root {
+    font-size: 0.9rem;
+    color: #9ca3af;
+    padding: 0.2rem 0.5rem;
+    background-color: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+}
+
 #status {
     font-size: 0.9rem;
     padding: 0.3rem 0.6rem;

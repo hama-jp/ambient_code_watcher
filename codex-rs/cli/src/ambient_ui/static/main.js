@@ -4,7 +4,7 @@ const UI_STRINGS = {
     CONNECTED: '接続済み',
     DISCONNECTED: '切断済み',
     CONNECTION_FAILED: '接続失敗',
-    WELCOME_MESSAGE: 'Ambient Watcherに接続しました',
+    WELCOME_MESSAGE: 'Ambient Code Watcherに接続しました',
     CONNECTION_LOST: 'サーバーとの接続が失われました。3秒後に再接続を試みます...',
     CONNECTION_RESTORED: 'サーバーに再接続しました',
     CONNECTION_CLOSED_CLEAN: 'サーバーとの接続が正常に終了しました',
@@ -119,7 +119,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const logEntry = document.createElement('div');
             logEntry.classList.add('log-entry');
 
-            if (data.System) {
+            if (data.ProjectRoot) {
+                // プロジェクトルートパスを更新
+                const projectRootDiv = document.getElementById('project-root');
+                if (projectRootDiv) {
+                    projectRootDiv.textContent = `📁 ${data.ProjectRoot}`;
+                    projectRootDiv.title = `監視中のプロジェクト: ${data.ProjectRoot}`;
+                }
+                return; // ログには追加しない
+            } else if (data.System) {
                 logEntry.classList.add(CSS_CLASSES.SYSTEM);
                 logEntry.textContent = data.System;
             } else if (data.Analysis) {

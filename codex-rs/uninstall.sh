@@ -1,8 +1,8 @@
 #!/bin/bash
-# Ambient Watcher アンインストールスクリプト
+# Ambient Code Watcher アンインストールスクリプト
 
 echo "========================================="
-echo "  Ambient Watcher アンインストーラー"
+echo "  Ambient Code Watcher アンインストーラー"
 echo "========================================="
 echo ""
 
@@ -14,12 +14,12 @@ NC='\033[0m' # No Color
 
 # インストール先ディレクトリ
 INSTALL_DIR="$HOME/.local/bin"
-CONFIG_DIR="$HOME/.config/ambient-watcher"
+CONFIG_DIR="$HOME/.config/ambient"
 
 # 確認
 echo "以下のファイルを削除します:"
 echo "  - $INSTALL_DIR/ambient"
-echo "  - $INSTALL_DIR/ambient-watcher"
+echo "  - $INSTALL_DIR/codex-ambient"
 echo "  - $CONFIG_DIR (設定ディレクトリ)"
 echo ""
 read -p "本当にアンインストールしますか？ (y/n): " -n 1 -r
@@ -41,12 +41,13 @@ else
     echo -e "${YELLOW}⚠ ambientコマンドが見つかりません${NC}"
 fi
 
-if [ -f "$INSTALL_DIR/ambient-watcher" ]; then
-    rm "$INSTALL_DIR/ambient-watcher"
-    echo -e "${GREEN}✓ ambient-watcherを削除しました${NC}"
+if [ -f "$INSTALL_DIR/codex-ambient" ]; then
+    rm "$INSTALL_DIR/codex-ambient"
+    echo -e "${GREEN}✓ codex-ambientを削除しました${NC}"
 else
-    echo -e "${YELLOW}⚠ ambient-watcherが見つかりません${NC}"
+    echo -e "${YELLOW}⚠ codex-ambientが見つかりません${NC}"
 fi
+
 
 # 設定ファイルの削除
 echo ""
@@ -69,7 +70,7 @@ echo "========================================="
 echo -e "${GREEN}アンインストールが完了しました${NC}"
 echo "========================================="
 echo ""
-echo "Ambient Watcherをご利用いただきありがとうございました！"
+echo "Ambient Code Watcherをご利用いただきありがとうございました！"
 echo ""
 echo "再インストールする場合:"
 echo "  ./install.sh"

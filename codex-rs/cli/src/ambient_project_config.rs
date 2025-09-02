@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// プロジェクトごとのAmbient Watcher設定
+/// プロジェクトごとのAmbient Code Watcher設定
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProjectConfig {
     /// レビュー設定
@@ -110,7 +110,7 @@ impl Default for ProjectConfig {
 impl ProjectConfig {
     /// プロジェクト設定を読み込む
     pub fn load_from_project(project_path: &Path) -> Result<Self> {
-        let config_dir = project_path.join(".ambient_watcher");
+        let config_dir = project_path.join(".ambient");
         let config_file = config_dir.join("config.toml");
         
         if config_file.exists() {
@@ -125,7 +125,7 @@ impl ProjectConfig {
     
     /// プロジェクト設定を保存する
     pub fn save_to_project(&self, project_path: &Path) -> Result<()> {
-        let config_dir = project_path.join(".ambient_watcher");
+        let config_dir = project_path.join(".ambient");
         fs::create_dir_all(&config_dir)?;
         
         let config_file = config_dir.join("config.toml");
@@ -141,11 +141,11 @@ impl ProjectConfig {
         config.save_to_project(project_path)?;
         
         // READMEも作成
-        let config_dir = project_path.join(".ambient_watcher");
+        let config_dir = project_path.join(".ambient");
         let readme_path = config_dir.join("README.md");
-        let readme_content = r#"# Ambient Watcher プロジェクト設定
+        let readme_content = r#"# Ambient Code Watcher プロジェクト設定
 
-このディレクトリには、Ambient Watcherのプロジェクト固有の設定が含まれています。
+このディレクトリには、Ambient Code Watcherのプロジェクト固有の設定が含まれています。
 
 ## ファイル構成
 

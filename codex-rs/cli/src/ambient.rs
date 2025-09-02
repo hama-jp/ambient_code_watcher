@@ -22,11 +22,89 @@ use crate::ambient_project_config::ProjectConfig;
 
 #[derive(Debug, Parser)]
 pub struct AmbientCommand {
+    #[clap(subcommand)]
+    pub subcommand: Option<AmbientSubcommand>,
+    
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
 
+#[derive(Debug, clap::Subcommand)]
+pub enum AmbientSubcommand {
+    /// Initialize ambient watcher configuration in the current directory
+    Init,
+}
+
 pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
+    match cmd.subcommand {
+        Some(AmbientSubcommand::Init) => {
+            init_project()?;
+            Ok(())
+        }
+        None => {
+            run_ambient_watcher(cmd).await
+        }
+    }
+}
+
+fn init_project() -> Result<()> {
+    let current_dir = std::env::current_dir()?;
+    let config_dir = current_dir.join(".ambient");
+    
+    // Check if already initialized
+    if config_dir.exists() {
+        println!("すでに初期化されています: {}", config_dir.display());
+        return Ok(());
+    }
+    
+    // Check if Git repository exists
+    let git_dir = current_dir.join(".git");
+    if !git_dir.exists() {
+        println!("Gitリポジトリが見つかりません。git initを実行します...");
+        Command::new("git")
+            .arg("init")
+            .current_dir(&current_dir)
+            .output()?;
+        println!("✓ Gitリポジトリを初期化しました");
+    }
+    
+    // Create .ambient directory
+    fs::create_dir_all(&config_dir)?;
+    println!("✓ ディレクトリを作成しました: {}", config_dir.display());
+    
+    // Create default configuration
+    let default_config = ProjectConfig::default();
+    default_config.save_to_project(&current_dir)?;
+    println!("✓ 設定ファイルを作成しました: {}/config.toml", config_dir.display());
+    
+    // Add to .gitignore if needed
+    let gitignore_path = current_dir.join(".gitignore");
+    let mut gitignore_content = if gitignore_path.exists() {
+        fs::read_to_string(&gitignore_path)?
+    } else {
+        String::new()
+    };
+    
+    if !gitignore_content.contains(".ambient/") {
+        if !gitignore_content.is_empty() && !gitignore_content.ends_with('\n') {
+            gitignore_content.push('\n');
+        }
+        gitignore_content.push_str("# Ambient Code Watcher\n");
+        gitignore_content.push_str(".ambient/\n");
+        fs::write(&gitignore_path, gitignore_content)?;
+        println!("✓ .gitignoreに.ambient/を追加しました");
+    }
+    
+    println!("\n初期化が完了しました！");
+    println!("設定ファイル: {}/config.toml", config_dir.display());
+    println!("\n使い方:");
+    println!("  ambient          # Ambient Code Watcherを起動");
+    println!("  ambient --help   # ヘルプを表示");
+    
+    Ok(())
+}
+
+async fn run_ambient_watcher(cmd: AmbientCommand) -> Result<()> {
     // 設定ファイルを読み込む
     let ambient_config = AmbientConfig::load()?;
     let check_interval = Duration::from_secs(ambient_config.check_interval_secs);
@@ -60,16 +138,21 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
     // Create the broadcast channel for communication between the server and the analysis loop
     let (tx, mut rx) = broadcast::channel::<AmbientEvent>(100);
 
+    // Create a shutdown signal
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
     // Start the web server in a separate task
     let server_tx = tx.clone();
     let server_port = ambient_config.port;
-    tokio::spawn(async move {
-        run_server(server_tx, server_port).await;
+    let server_handle = tokio::spawn(async move {
+        run_server(server_tx, server_port, async move {
+            let _ = shutdown_rx.await;
+        }).await;
     });
 
     let mut ticker = tokio::time::interval(check_interval);
 
-    println!("Ambient Watcherが起動しました。終了するにはCtrl+Cを押してください。");
+    println!("Ambient Code Watcherが起動しました。終了するにはCtrl+Cを押してください。");
     // The UI address is printed by the server itself.
 
     loop {
@@ -94,11 +177,18 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
 
             // Handle Ctrl-C for graceful shutdown
             _ = tokio::signal::ctrl_c() => {
-                println!("\nAmbient Watcherを終了します...");
+                println!("\nAmbient Code Watcherを終了します...");
                 break;
             }
         }
     }
+
+    // Shutdown the server
+    let _ = shutdown_tx.send(());
+    
+    // Wait for the server to finish
+    let _ = tokio::time::timeout(Duration::from_secs(5), server_handle).await;
+
     Ok(())
 }
 

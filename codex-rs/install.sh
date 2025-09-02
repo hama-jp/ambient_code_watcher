@@ -1,10 +1,10 @@
 #!/bin/bash
-# Ambient Watcher インストールスクリプト
+# Ambient Code Watcher インストールスクリプト
 
 set -e
 
 echo "========================================="
-echo "  Ambient Watcher インストーラー"
+echo "  Ambient Code Watcher インストーラー"
 echo "========================================="
 echo ""
 
@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 # インストール先ディレクトリ
 INSTALL_DIR="$HOME/.local/bin"
-CONFIG_DIR="$HOME/.config/ambient-watcher"
+CONFIG_DIR="$HOME/.config/ambient"
 
 # スクリプトのディレクトリを取得
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -63,7 +63,7 @@ fi
 echo ""
 
 # 2. ビルド
-echo "Ambient Watcherをビルドしています..."
+echo "Ambient Code Watcherをビルドしています..."
 cd "$SCRIPT_DIR"
 cargo build --release --bin codex
 if [ $? -ne 0 ]; then
@@ -80,30 +80,35 @@ mkdir -p "$CONFIG_DIR"
 
 # 4. 実行ファイルのインストール
 echo "実行ファイルをインストールしています..."
-cp "$SCRIPT_DIR/target/release/codex" "$INSTALL_DIR/ambient-watcher"
-chmod +x "$INSTALL_DIR/ambient-watcher"
+# codexバイナリをコピー
+cp "$SCRIPT_DIR/target/release/codex" "$INSTALL_DIR/codex-ambient"
+chmod +x "$INSTALL_DIR/codex-ambient"
 
-# 5. ambientコマンドのシンボリックリンクを作成
+# 5. ambientラッパースクリプトを作成
 cat > "$INSTALL_DIR/ambient" << 'EOF'
 #!/bin/bash
-# Ambient Watcher 起動スクリプト
-
-# 環境変数の設定
+# Ambient Code Watcher 起動スクリプト
 export CODEX_OSS_BASE_URL="${CODEX_OSS_BASE_URL:-http://localhost:11434/v1}"
-
-# Ambient Watcherを起動
-exec "$HOME/.local/bin/ambient-watcher" ambient "$@"
+exec "$HOME/.local/bin/codex-ambient" ambient "$@"
 EOF
 chmod +x "$INSTALL_DIR/ambient"
 
 echo -e "${GREEN}✓ 実行ファイルをインストールしました${NC}"
 echo ""
 
-# 6. 設定ファイルのコピー
+# 6. UIファイルのコピー
+echo "UIファイルをインストールしています..."
+mkdir -p "$CONFIG_DIR/ui/static"
+cp -r "$SCRIPT_DIR/cli/src/ambient_ui/index.html" "$CONFIG_DIR/ui/"
+cp -r "$SCRIPT_DIR/cli/src/ambient_ui/static/"* "$CONFIG_DIR/ui/static/"
+echo -e "${GREEN}✓ UIファイルをインストールしました${NC}"
+echo ""
+
+# 7. 設定ファイルのコピー
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     echo "設定ファイルを作成しています..."
     cat > "$CONFIG_DIR/config.toml" << 'EOF'
-# Ambient Watcher 設定ファイル
+# Ambient Code Watcher 設定ファイル
 
 # チェック間隔（秒）
 check_interval_secs = 60
@@ -123,7 +128,7 @@ else
 fi
 echo ""
 
-# 7. PATHの確認
+# 8. PATHの確認
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}PATHの設定が必要です${NC}"
     echo ""
@@ -148,13 +153,13 @@ else
 fi
 echo ""
 
-# 8. 完了メッセージ
+# 9. 完了メッセージ
 echo "========================================="
 echo -e "${GREEN}インストールが完了しました！${NC}"
 echo "========================================="
 echo ""
 echo "使い方:"
-echo "  ambient          # Ambient Watcherを起動"
+echo "  ambient          # Ambient Code Watcherを起動"
 echo "  ambient --help   # ヘルプを表示"
 echo ""
 echo "設定ファイル:"
