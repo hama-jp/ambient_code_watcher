@@ -146,6 +146,23 @@ exclude_patterns = [
 ]
 ```
 
+## システム停止
+
+### Ambient Watcherの停止
+```bash
+# Ambient Watcherを停止（Ctrl+Cまたは）
+pkill ambient
+```
+
+### Ollamaの停止
+```bash
+# Ollamaサービスを停止
+sudo systemctl stop ollama
+
+# または手動でプロセスを終了
+sudo pkill ollama
+```
+
 ## トラブルシューティング
 
 ### ポートが使用中の場合
