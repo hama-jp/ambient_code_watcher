@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use codex_common::CliConfigOverrides;
-use codex_core::ModelProviderInfo;
 use codex_core::chat_completions::stream_chat_completions;
 use codex_core::client_common::Prompt;
 use codex_core::client_common::ResponseEvent;
@@ -12,8 +11,10 @@ use codex_protocol::models::ResponseItem;
 use futures::StreamExt;
 use std::fs;
 use std::process::Command;
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Parser)]
 pub struct AmbientCommand {
@@ -22,7 +23,11 @@ pub struct AmbientCommand {
 }
 
 pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
+    const AMBIENT_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+    const LOOP_SLEEP_DURATION: Duration = Duration::from_millis(100);
+
     println!("Ambient agent started. Monitoring for changes... (Press Ctrl+C to stop)");
+    println!("You can also type a query and press Enter for a one-off analysis.");
 
     let cli_overrides = cmd
         .config_overrides
@@ -32,11 +37,52 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
     let client = reqwest::Client::new();
     let cwd = std::env::current_dir()?;
 
-    loop {
-        if let Err(e) = perform_ambient_check(&config, &client, &cwd).await {
-            eprintln!("[{}] Error: {}", chrono::Local::now().to_rfc2822(), e);
+    let user_prompt = Arc::new(Mutex::new(None));
+    let user_prompt_clone = user_prompt.clone();
+
+    tokio::spawn(async move {
+        let mut stdin = BufReader::new(tokio::io::stdin());
+        loop {
+            let mut line = String::new();
+            match stdin.read_line(&mut line).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    if !line.trim().is_empty() {
+                        let mut prompt = user_prompt_clone.lock().await;
+                        *prompt = Some(line);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error reading from stdin, input listener is disabled: {}", e);
+                }
+            }
         }
-        thread::sleep(Duration::from_secs(10));
+    });
+
+    let mut last_check = std::time::Instant::now();
+
+    loop {
+        // Check for user prompt
+        let mut prompt_guard = user_prompt.lock().await;
+        if let Some(prompt_text) = prompt_guard.take() {
+            println!("\n--- Running one-off analysis ---");
+            if let Err(e) = run_analysis_prompt(prompt_text.trim().to_string(), &config, &client).await {
+                eprintln!("Error running analysis: {e}");
+            }
+            println!("--- Finished one-off analysis ---\n");
+        }
+        drop(prompt_guard);
+
+
+        // Perform ambient check every 10 seconds
+        if last_check.elapsed() >= AMBIENT_CHECK_INTERVAL {
+            if let Err(e) = perform_ambient_check(&config, &client, &cwd).await {
+                eprintln!("[{}] Error: {}", chrono::Local::now().to_rfc2822(), e);
+            }
+            last_check = std::time::Instant::now();
+        }
+
+        tokio::time::sleep(LOOP_SLEEP_DURATION).await;
     }
 }
 
