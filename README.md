@@ -1,4 +1,4 @@
-# Ambient Watcher
+# Ambient Code Watcher
 
 リアルタイムコードレビュー支援ツール - [Codex](https://github.com/anthropics/codex)をベースに開発
 
