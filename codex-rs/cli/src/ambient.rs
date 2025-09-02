@@ -10,11 +10,12 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use futures::StreamExt;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::Mutex;
+use tokio::sync::broadcast;
+
+use crate::ambient_server::{run_server, AmbientEvent};
 
 #[derive(Debug, Parser)]
 pub struct AmbientCommand {
@@ -24,10 +25,6 @@ pub struct AmbientCommand {
 
 pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
     const AMBIENT_CHECK_INTERVAL: Duration = Duration::from_secs(10);
-    const LOOP_SLEEP_DURATION: Duration = Duration::from_millis(100);
-
-    println!("Ambient agent started. Monitoring for changes... (Press Ctrl+C to stop)");
-    println!("You can also type a query and press Enter for a one-off analysis.");
 
     let cli_overrides = cmd
         .config_overrides
@@ -37,61 +34,56 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
     let client = reqwest::Client::new();
     let cwd = std::env::current_dir()?;
 
-    let user_prompt = Arc::new(Mutex::new(None));
-    let user_prompt_clone = user_prompt.clone();
+    // Create the broadcast channel for communication between the server and the analysis loop
+    let (tx, mut rx) = broadcast::channel::<AmbientEvent>(100);
 
+    // Start the web server in a separate task
+    let server_tx = tx.clone();
     tokio::spawn(async move {
-        let mut stdin = BufReader::new(tokio::io::stdin());
-        loop {
-            let mut line = String::new();
-            match stdin.read_line(&mut line).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    if !line.trim().is_empty() {
-                        let mut prompt = user_prompt_clone.lock().await;
-                        *prompt = Some(line);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error reading from stdin, input listener is disabled: {}", e);
-                }
-            }
-        }
+        run_server(server_tx).await;
     });
 
-    let mut last_check = std::time::Instant::now();
+    let mut ticker = tokio::time::interval(AMBIENT_CHECK_INTERVAL);
+
+    println!("Ambient agent started. Press Ctrl+C to stop.");
+    // The UI address is printed by the server itself.
 
     loop {
-        // Check for user prompt
-        let mut prompt_guard = user_prompt.lock().await;
-        if let Some(prompt_text) = prompt_guard.take() {
-            println!("\n--- Running one-off analysis ---");
-            if let Err(e) = run_analysis_prompt(prompt_text.trim().to_string(), &config, &client).await {
-                eprintln!("Error running analysis: {e}");
+        tokio::select! {
+            // Listen for user queries from the web UI
+            Ok(event) = rx.recv() => {
+                if let AmbientEvent::UserQuery(prompt_text) = event {
+                    let _ = tx.send(AmbientEvent::Analysis(format!("\n--- Running one-off analysis for: \"{}\" ---", prompt_text.trim())));
+                    if let Err(e) = run_analysis_prompt(prompt_text.trim().to_string(), &config, &client, &tx).await {
+                        let _ = tx.send(AmbientEvent::Analysis(format!("Error running analysis: {e}")));
+                    }
+                    let _ = tx.send(AmbientEvent::Analysis("--- Finished one-off analysis ---".to_string()));
+                }
             }
-            println!("--- Finished one-off analysis ---\n");
-        }
-        drop(prompt_guard);
 
-
-        // Perform ambient check every 10 seconds
-        if last_check.elapsed() >= AMBIENT_CHECK_INTERVAL {
-            if let Err(e) = perform_ambient_check(&config, &client, &cwd).await {
-                eprintln!("[{}] Error: {}", chrono::Local::now().to_rfc2822(), e);
+            // Perform ambient check on a timer
+            _ = ticker.tick() => {
+                if let Err(e) = perform_ambient_check(&config, &client, &cwd, &tx).await {
+                    let err_msg = format!("[{}] Error: {}", chrono::Local::now().to_rfc2822(), e);
+                    let _ = tx.send(AmbientEvent::Analysis(err_msg));
+                }
             }
-            last_check = std::time::Instant::now();
-        }
 
-        tokio::time::sleep(LOOP_SLEEP_DURATION).await;
+            // Handle Ctrl-C for graceful shutdown
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nShutting down ambient agent...");
+                break;
+            }
+        }
     }
+    Ok(())
 }
-
-use std::path::Path;
 
 async fn run_analysis_prompt(
     prompt_text: String,
     config: &Config,
     client: &reqwest::Client,
+    tx: &broadcast::Sender<AmbientEvent>,
 ) -> Result<()> {
     let model_family = model_family::find_family_for_model(&config.model)
         .ok_or_else(|| anyhow::anyhow!("Model family not found for: {}", config.model))?;
@@ -118,21 +110,31 @@ async fn run_analysis_prompt(
 
     match stream_result {
         Ok(mut stream) => {
+            let mut full_response = String::new();
             while let Some(event) = stream.next().await {
                 match event {
                     Ok(ResponseEvent::OutputTextDelta(delta)) => {
-                        print!("{delta}");
+                        full_response.push_str(&delta);
                     }
                     Ok(ResponseEvent::Completed { .. }) => {
-                        println!(); // Newline after output
                         break;
                     }
-                    Err(e) => return Err(anyhow::anyhow!("Error processing stream: {e:?}")),
+                    Err(e) => {
+                        let err_msg = format!("Error processing stream: {e:?}");
+                        let _ = tx.send(AmbientEvent::Analysis(err_msg.clone()));
+                        return Err(anyhow::anyhow!(err_msg));
+                    }
                     _ => {}
                 }
             }
+            // Send the full response at once.
+            let _ = tx.send(AmbientEvent::Analysis(full_response));
         }
-        Err(e) => return Err(anyhow::anyhow!("Failed to get AI insight: {e}")),
+        Err(e) => {
+            let err_msg = format!("Failed to get AI insight: {e}");
+            let _ = tx.send(AmbientEvent::Analysis(err_msg.clone()));
+            return Err(anyhow::anyhow!(err_msg));
+        }
     }
     Ok(())
 }
@@ -141,6 +143,7 @@ async fn perform_ambient_check(
     config: &Config,
     client: &reqwest::Client,
     cwd: &Path,
+    tx: &broadcast::Sender<AmbientEvent>,
 ) -> Result<()> {
     let output = Command::new("git")
         .arg("status")
@@ -156,11 +159,12 @@ async fn perform_ambient_check(
     let lines: Vec<&str> = stdout.trim().lines().collect();
 
     if !lines.is_empty() {
-        println!(
+        let msg = format!(
             "[{}] Found {} changed file(s).",
             chrono::Local::now().to_rfc2822(),
             lines.len()
         );
+        let _ = tx.send(AmbientEvent::Analysis(msg));
     }
 
     for line in lines {
@@ -169,7 +173,9 @@ async fn perform_ambient_check(
             continue;
         }
         let file_path = parts[1];
-        println!("--- Analyzing: {file_path} ---");
+        let _ = tx.send(AmbientEvent::Analysis(format!(
+            "--- Analyzing: {file_path} ---"
+        )));
 
         // Task A: Diff-based analysis
         let diff_output = Command::new("git")
@@ -183,24 +189,30 @@ async fn perform_ambient_check(
 
         if !diff_content.trim().is_empty() {
             // A.1: Summarize changes
-            println!("\n[1/4] Summary of changes:");
+            let _ = tx.send(AmbientEvent::Analysis(
+                "\n[1/4] Summary of changes:".to_string(),
+            ));
             let prompt1 = format!(
                 "You are an ambient AI assistant. Here is the diff for `{file_path}`. Please provide a brief, one-sentence summary of the changes.\n\n---\n\n{diff_content}"
             );
-            if let Err(e) = run_analysis_prompt(prompt1, config, client).await {
-                eprintln!("Error: {e}");
+            if let Err(e) = run_analysis_prompt(prompt1, config, client, tx).await {
+                let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
             }
 
             // A.2: Secret detection
-            println!("\n[2/4] Secret detection:");
+            let _ = tx.send(AmbientEvent::Analysis(
+                "\n[2/4] Secret detection:".to_string(),
+            ));
             let prompt2 = format!(
                 "You are a security scanner. Analyze the following diff for `{file_path}` and report any potential secrets like API keys or credentials. If none are found, say 'No secrets found'.\n\n---\n\n{diff_content}"
             );
-            if let Err(e) = run_analysis_prompt(prompt2, config, client).await {
-                eprintln!("Error: {e}");
+            if let Err(e) = run_analysis_prompt(prompt2, config, client, tx).await {
+                let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
             }
         } else {
-            println!("\nSkipping diff analysis (file is new or unstaged).");
+            let _ = tx.send(AmbientEvent::Analysis(
+                "\nSkipping diff analysis (file is new or unstaged).".to_string(),
+            ));
         }
 
         // Task B: Full-file analysis
@@ -208,29 +220,36 @@ async fn perform_ambient_check(
         let content = match fs::read_to_string(&full_path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to read file {}: {e}", full_path.display());
+                let err_msg = format!("Failed to read file {}: {e}", full_path.display());
+                let _ = tx.send(AmbientEvent::Analysis(err_msg));
                 continue;
             }
         };
 
         // B.1: Magic number detection
-        println!("\n[3/4] Magic number detection:");
+        let _ = tx.send(AmbientEvent::Analysis(
+            "\n[3/4] Magic number detection:".to_string(),
+        ));
         let prompt3 = format!(
             "You are a code quality assistant. Analyze the following file `{file_path}` and identify any hard-coded constants (magic numbers). If any are found, suggest defining them as named constants. If none are found, say 'No magic numbers found'.\n\n---\n\n{content}"
         );
-        if let Err(e) = run_analysis_prompt(prompt3, config, client).await {
-            eprintln!("Error: {e}");
+        if let Err(e) = run_analysis_prompt(prompt3, config, client, tx).await {
+            let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
         }
 
         // B.2: Complexity/Duplication detection
-        println!("\n[4/4] Complexity and duplication check:");
+        let _ = tx.send(AmbientEvent::Analysis(
+            "\n[4/4] Complexity and duplication check:".to_string(),
+        ));
         let prompt4 = format!(
             "You are a code quality assistant. Analyze the following file `{file_path}` for overly complex functions or duplicated code blocks. If any are found, suggest refactoring or adding comments for clarity. If none are found, say 'No complexity or duplication issues found'.\n\n---\n\n{content}"
         );
-        if let Err(e) = run_analysis_prompt(prompt4, config, client).await {
-            eprintln!("Error: {e}");
+        if let Err(e) = run_analysis_prompt(prompt4, config, client, tx).await {
+            let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
         }
-        println!("--- Finished analyzing: {file_path} ---\n");
+        let _ = tx.send(AmbientEvent::Analysis(format!(
+            "--- Finished analyzing: {file_path} ---\n"
+        )));
     }
     Ok(())
 }
@@ -238,6 +257,7 @@ async fn perform_ambient_check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_core::ModelProviderInfo;
     use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
     use codex_core::WireApi;
     use codex_core::config_types::History;
@@ -251,11 +271,8 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use tempfile::tempdir;
-    use wiremock::Mock;
-    use wiremock::MockServer;
-    use wiremock::ResponseTemplate;
-    use wiremock::matchers::method;
-    use wiremock::matchers::path;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn setup_test_env() -> (Config, MockServer, tempfile::TempDir) {
         let server = MockServer::start().await;
@@ -289,6 +306,7 @@ mod tests {
             model: model.clone(),
             model_family,
             model_provider_id: provider_id.clone(),
+            // This is deprecated, but required for now.
             model_provider: provider_info.clone(),
             model_providers: HashMap::from([(provider_id, provider_info)]),
             model_context_window: None,
@@ -332,6 +350,7 @@ mod tests {
     async fn test_ambient_check_happy_path() {
         let (config, server, dir) = setup_test_env().await;
         let client = reqwest::Client::new();
+        let (tx, _rx) = broadcast::channel::<AmbientEvent>(1);
 
         // Create a dummy file change
         let file_path = dir.path().join("test.txt");
@@ -352,7 +371,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = perform_ambient_check(&config, &client, dir.path()).await;
+        let result = perform_ambient_check(&config, &client, dir.path(), &tx).await;
         assert!(result.is_ok());
     }
 
@@ -360,6 +379,7 @@ mod tests {
     async fn test_ambient_check_api_error() {
         let (config, server, dir) = setup_test_env().await;
         let client = reqwest::Client::new();
+        let (tx, _rx) = broadcast::channel::<AmbientEvent>(1);
 
         // Create a dummy file change
         let file_path = dir.path().join("test.txt");
@@ -378,10 +398,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = perform_ambient_check(&config, &client, dir.path()).await;
-    // The new logic continues on error, so the overall result should be Ok.
-    // The errors are printed to stderr, but the test doesn't capture that.
-    // We are asserting that the function doesn't panic and completes.
-    assert!(result.is_ok());
+        let result = perform_ambient_check(&config, &client, dir.path(), &tx).await;
+        // The new logic continues on error, so the overall result should be Ok.
+        // The errors are printed to stderr, but the test doesn't capture that.
+        // We are asserting that the function doesn't panic and completes.
+        assert!(result.is_ok());
     }
 }
