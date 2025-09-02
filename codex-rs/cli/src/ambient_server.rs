@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AmbientEvent {
     Analysis(String),
     UserQuery(String),
+    QueryResponse(String), // 質問への回答を区別
     System(String),
 }
 
@@ -30,12 +32,12 @@ struct AppState {
     tx: broadcast::Sender<AmbientEvent>,
 }
 
-pub async fn run_server(tx: broadcast::Sender<AmbientEvent>) {
+pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16) {
     let app_state = Arc::new(AppState { tx });
 
     // Serve static files from the `ambient_ui` directory.
     // The `index.html` file will be served at the root.
-    let serve_dir = tower_http::services::ServeDir::new("codex-rs/cli/src/ambient_ui")
+    let serve_dir = tower_http::services::ServeDir::new("cli/src/ambient_ui")
         .append_index_html_on_directories(true);
 
     let app = Router::new()
@@ -43,18 +45,35 @@ pub async fn run_server(tx: broadcast::Sender<AmbientEvent>) {
         .nest_service("/", serve_dir)
         .with_state(app_state);
 
-    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("Failed to bind to port: {e}");
-            return;
+    // 指定されたポートを試し、失敗したら次のポートを試す
+    let mut try_port = port;
+    let listener = loop {
+        match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", try_port)).await {
+            Ok(l) => break l,
+            Err(_) if try_port < port + 10 => {
+                // 最大10ポート試す
+                eprintln!("ポート{}は使用中です。次のポートを試します...", try_port);
+                try_port += 1;
+            }
+            Err(e) => {
+                eprintln!("ポート{}へのバインドに失敗しました: {}", try_port, e);
+                return;
+            }
         }
     };
 
-    println!(
-        "Codex Ambient UI is running at http://{}",
-        listener.local_addr().unwrap()
-    );
+    let actual_port = listener.local_addr().unwrap().port();
+    if actual_port == port {
+        println!(
+            "Ambient Watcherが http://127.0.0.1:{} で動作中です",
+            actual_port
+        );
+    } else {
+        println!(
+            "Ambient Watcherが http://127.0.0.1:{} で動作中です (設定ポート{}は使用中)",
+            actual_port, port
+        );
+    }
 
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("Server error: {e}");
@@ -73,7 +92,7 @@ async fn websocket(socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.tx.subscribe();
 
     // Send a welcome message.
-    let welcome_msg = AmbientEvent::System("Connected to Codex Ambient server.".to_string());
+    let welcome_msg = AmbientEvent::System("Ambient Watcherに接続しました".to_string());
     if sender
         .send(Message::Text(welcome_msg.to_json()))
         .await

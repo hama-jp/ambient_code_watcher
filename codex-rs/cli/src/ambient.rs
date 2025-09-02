@@ -9,6 +9,7 @@ use codex_core::model_family;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use futures::StreamExt;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -16,6 +17,8 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use crate::ambient_server::{run_server, AmbientEvent};
+use crate::ambient_config::AmbientConfig;
+use crate::ambient_project_config::ProjectConfig;
 
 #[derive(Debug, Parser)]
 pub struct AmbientCommand {
@@ -24,13 +27,33 @@ pub struct AmbientCommand {
 }
 
 pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
-    const AMBIENT_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+    // 設定ファイルを読み込む
+    let ambient_config = AmbientConfig::load()?;
+    let check_interval = Duration::from_secs(ambient_config.check_interval_secs);
+    
+    println!("検出間隔: {}秒", ambient_config.check_interval_secs);
 
-    let cli_overrides = cmd
+    let mut cli_overrides = cmd
         .config_overrides
         .parse_overrides()
         .map_err(|e| anyhow::anyhow!(e))?;
-    let config = Config::load_with_cli_overrides(cli_overrides, Default::default())?;
+    
+    // Force OSS provider for ambient mode
+    // Note: We need to use toml::Value here, not serde_json::Value
+    use toml::Value;
+    cli_overrides.push(("model_provider_id".to_string(), Value::String("oss".to_string())));
+    cli_overrides.push(("model".to_string(), Value::String("gpt-oss:20b".to_string())));
+    
+    let mut config = Config::load_with_cli_overrides(cli_overrides, Default::default())?;
+    
+    // Force set the provider ID after loading
+    config.model_provider_id = "oss".to_string();
+    
+    // Also update the model_provider field to match the OSS provider
+    if let Some(oss_provider) = config.model_providers.get("oss") {
+        config.model_provider = oss_provider.clone();
+    }
+    
     let client = reqwest::Client::new();
     let cwd = std::env::current_dir()?;
 
@@ -39,13 +62,14 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
 
     // Start the web server in a separate task
     let server_tx = tx.clone();
+    let server_port = ambient_config.port;
     tokio::spawn(async move {
-        run_server(server_tx).await;
+        run_server(server_tx, server_port).await;
     });
 
-    let mut ticker = tokio::time::interval(AMBIENT_CHECK_INTERVAL);
+    let mut ticker = tokio::time::interval(check_interval);
 
-    println!("Ambient agent started. Press Ctrl+C to stop.");
+    println!("Ambient Watcherが起動しました。終了するにはCtrl+Cを押してください。");
     // The UI address is printed by the server itself.
 
     loop {
@@ -53,11 +77,10 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
             // Listen for user queries from the web UI
             Ok(event) = rx.recv() => {
                 if let AmbientEvent::UserQuery(prompt_text) = event {
-                    let _ = tx.send(AmbientEvent::Analysis(format!("\n--- Running one-off analysis for: \"{}\" ---", prompt_text.trim())));
-                    if let Err(e) = run_analysis_prompt(prompt_text.trim().to_string(), &config, &client, &tx).await {
-                        let _ = tx.send(AmbientEvent::Analysis(format!("Error running analysis: {e}")));
+                    // 質問への回答用の関数を呼び出す
+                    if let Err(e) = run_query_response(prompt_text.trim().to_string(), &config, &client, &tx).await {
+                        let _ = tx.send(AmbientEvent::QueryResponse(format!("エラー: {e}")));
                     }
-                    let _ = tx.send(AmbientEvent::Analysis("--- Finished one-off analysis ---".to_string()));
                 }
             }
 
@@ -71,9 +94,70 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
 
             // Handle Ctrl-C for graceful shutdown
             _ = tokio::signal::ctrl_c() => {
-                println!("\nShutting down ambient agent...");
+                println!("\nAmbient Watcherを終了します...");
                 break;
             }
+        }
+    }
+    Ok(())
+}
+
+// 質問への回答用関数
+async fn run_query_response(
+    prompt_text: String,
+    config: &Config,
+    client: &reqwest::Client,
+    tx: &broadcast::Sender<AmbientEvent>,
+) -> Result<()> {
+    let model_family = model_family::find_family_for_model(&config.model)
+        .ok_or_else(|| anyhow::anyhow!("Model family not found for: {}", config.model))?;
+
+    let provider = config
+        .model_providers
+        .get("oss")
+        .ok_or_else(|| anyhow::anyhow!("OSS provider not found"))?;
+
+    let user_message = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText { text: prompt_text }],
+    };
+
+    let prompt = Prompt {
+        input: vec![user_message],
+        store: false,
+        tools: vec![],
+        base_instructions_override: None,
+    };
+
+    let stream_result = stream_chat_completions(&prompt, &model_family, client, provider).await;
+
+    match stream_result {
+        Ok(mut stream) => {
+            let mut full_response = String::new();
+            while let Some(event) = stream.next().await {
+                match event {
+                    Ok(ResponseEvent::OutputTextDelta(delta)) => {
+                        full_response.push_str(&delta);
+                    }
+                    Ok(ResponseEvent::Completed { .. }) => {
+                        break;
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Error processing stream: {e:?}");
+                        let _ = tx.send(AmbientEvent::QueryResponse(err_msg.clone()));
+                        return Err(anyhow::anyhow!(err_msg));
+                    }
+                    _ => {}
+                }
+            }
+            // QueryResponseとして送信
+            let _ = tx.send(AmbientEvent::QueryResponse(full_response));
+        }
+        Err(e) => {
+            let err_msg = format!("Failed to get AI insight: {e}");
+            let _ = tx.send(AmbientEvent::QueryResponse(err_msg.clone()));
+            return Err(anyhow::anyhow!(err_msg));
         }
     }
     Ok(())
@@ -88,10 +172,11 @@ async fn run_analysis_prompt(
     let model_family = model_family::find_family_for_model(&config.model)
         .ok_or_else(|| anyhow::anyhow!("Model family not found for: {}", config.model))?;
 
+    // Always use OSS provider for ambient mode
     let provider = config
         .model_providers
-        .get(&config.model_provider_id)
-        .ok_or_else(|| anyhow::anyhow!("Provider not found: {}", config.model_provider_id))?;
+        .get("oss")
+        .ok_or_else(|| anyhow::anyhow!("OSS provider not found"))?;
 
     let user_message = ResponseItem::Message {
         id: None,
@@ -139,116 +224,174 @@ async fn run_analysis_prompt(
     Ok(())
 }
 
+// ヘルパー関数: Gitコマンドの実行と結果チェック
+fn run_git_command(args: &[&str], cwd: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Git command failed: {}", stderr));
+    }
+    
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+// ヘルパー関数: 分析プロンプトの実行
+async fn analyze_with_prompt(
+    title: &str,
+    prompt: String,
+    config: &Config,
+    client: &reqwest::Client,
+    tx: &broadcast::Sender<AmbientEvent>,
+) {
+    let _ = tx.send(AmbientEvent::Analysis(format!("\n{}", title)));
+    if let Err(e) = run_analysis_prompt(prompt, config, client, tx).await {
+        let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
+    }
+}
+
 async fn perform_ambient_check(
     config: &Config,
     client: &reqwest::Client,
     cwd: &Path,
     tx: &broadcast::Sender<AmbientEvent>,
 ) -> Result<()> {
-    let output = Command::new("git")
-        .arg("status")
-        .arg("--porcelain")
-        .current_dir(cwd)
-        .output()?;
-
-    if output.stdout.is_empty() {
+    // プロジェクト設定を読み込み
+    let project_config = ProjectConfig::load_from_project(cwd).unwrap_or_default();
+    
+    if !project_config.enabled {
+        return Ok(());
+    }
+    // Git statusを一度だけ実行
+    let status_output = run_git_command(&["status", "--porcelain"], cwd)?;
+    
+    if status_output.trim().is_empty() {
         return Ok(());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.trim().lines().collect();
+    let lines: Vec<&str> = status_output.trim().lines().collect();
 
     if !lines.is_empty() {
         let msg = format!(
-            "[{}] Found {} changed file(s).",
+            "[{}] {}個の変更されたファイルが見つかりました。",
             chrono::Local::now().to_rfc2822(),
             lines.len()
         );
         let _ = tx.send(AmbientEvent::Analysis(msg));
     }
-
+    
+    // Git rootを一度だけ取得
+    let git_root = run_git_command(&["rev-parse", "--show-toplevel"], cwd)?
+        .trim()
+        .to_string();
+    
+    // 変更されたファイルを収集
+    let mut changed_files = Vec::new();
     for line in lines {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 2 {
+        if parts.len() >= 2 {
+            changed_files.push(parts[1].to_string());
+        }
+    }
+    
+    // すべてのdiffを一括で取得
+    let mut all_diffs = HashMap::new();
+    for file_path in &changed_files {
+        if let Ok(diff) = run_git_command(&["diff", "HEAD", "--", file_path], cwd) {
+            if !diff.trim().is_empty() {
+                all_diffs.insert(file_path.clone(), diff);
+            }
+        }
+    }
+
+    // 各ファイルを分析
+    for file_path in changed_files {
+        let file_path_str = file_path.as_str();
+        
+        // 除外パターンをチェック
+        if project_config.is_excluded(file_path_str) {
+            let _ = tx.send(AmbientEvent::Analysis(format!(
+                "[スキップ] {} は除外パターンに一致",
+                file_path_str
+            )));
             continue;
         }
-        let file_path = parts[1];
         let _ = tx.send(AmbientEvent::Analysis(format!(
-            "--- Analyzing: {file_path} ---"
+            "--- 分析中: {file_path_str} ---"
         )));
 
-        // Task A: Diff-based analysis
-        let diff_output = Command::new("git")
-            .arg("diff")
-            .arg("HEAD")
-            .arg("--")
-            .arg(file_path)
-            .current_dir(cwd)
-            .output()?;
-        let diff_content = String::from_utf8_lossy(&diff_output.stdout);
+        // プロジェクト設定に基づいたレビューを実行
+        let reviews = project_config.get_reviews_for_file(file_path_str);
+        
+        if reviews.is_empty() {
+            // デフォルトのレビューを実行
+            if let Some(diff_content) = all_diffs.get(&file_path) {
+                // 構文エラーと型エラーのチェック
+                let prompt1 = format!(
+                    "あなたはコードレビューアシスタントです。`{file_path_str}`のdiffを分析して、以下を日本語で報告してください：\n\n1. 構文エラーの可能性がある箇所（未定義変数、括弧の不一致、セミコロン忘れなど）\n2. 型の不一致の可能性\n3. エラーがある場合は`{file_path_str}:行番号`の形式でリンクを提供\n\nエラーがない場合は『構文エラーは見つかりませんでした』と答えてください。\n\n---\n\n{diff_content}"
+                );
+                analyze_with_prompt(
+                    "[1/3] 構文エラー・型エラーのチェック:",
+                    prompt1,
+                    config,
+                    client,
+                    tx,
+                ).await;
 
-        if !diff_content.trim().is_empty() {
-            // A.1: Summarize changes
-            let _ = tx.send(AmbientEvent::Analysis(
-                "\n[1/4] Summary of changes:".to_string(),
-            ));
-            let prompt1 = format!(
-                "You are an ambient AI assistant. Here is the diff for `{file_path}`. Please provide a brief, one-sentence summary of the changes.\n\n---\n\n{diff_content}"
-            );
-            if let Err(e) = run_analysis_prompt(prompt1, config, client, tx).await {
-                let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
-            }
-
-            // A.2: Secret detection
-            let _ = tx.send(AmbientEvent::Analysis(
-                "\n[2/4] Secret detection:".to_string(),
-            ));
-            let prompt2 = format!(
-                "You are a security scanner. Analyze the following diff for `{file_path}` and report any potential secrets like API keys or credentials. If none are found, say 'No secrets found'.\n\n---\n\n{diff_content}"
-            );
-            if let Err(e) = run_analysis_prompt(prompt2, config, client, tx).await {
-                let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
+                // セキュリティリスクの検出
+                let prompt2 = format!(
+                    "あなたはセキュリティエキスパートです。`{file_path_str}`のdiffを分析して、以下のセキュリティリスクを日本語で報告してください：\n\n1. ハードコードされたAPIキー、パスワード、トークン\n2. SQLインジェクション、XSSの脆弱性\n3. 安全でない入力検証\n4. エラー箇所は`{file_path_str}:行番号`形式で\n\nリスクがない場合は『セキュリティリスクは見つかりませんでした』と答えてください。\n\n---\n\n{diff_content}"
+                );
+                analyze_with_prompt(
+                    "[2/3] セキュリティリスクの検出:",
+                    prompt2,
+                    config,
+                    client,
+                    tx,
+                ).await;
             }
         } else {
-            let _ = tx.send(AmbientEvent::Analysis(
-                "\nSkipping diff analysis (file is new or unstaged).".to_string(),
-            ));
-        }
+            // カスタムレビューを実行
+            let review_count = reviews.len();
+            let mut review_index = 1;
+            
+            for review in reviews {
+                let content = if let Some(diff_content) = all_diffs.get(&file_path) {
+                    format!("{}
 
-        // Task B: Full-file analysis
-        let full_path = cwd.join(file_path);
-        let content = match fs::read_to_string(&full_path) {
-            Ok(c) => c,
-            Err(e) => {
-                let err_msg = format!("Failed to read file {}: {e}", full_path.display());
-                let _ = tx.send(AmbientEvent::Analysis(err_msg));
-                continue;
+---
+
+{}", review.prompt.replace("{file_path}", file_path_str), diff_content)
+                } else {
+                    let full_path = std::path::Path::new(&git_root).join(&file_path);
+                    if let Ok(file_content) = fs::read_to_string(&full_path) {
+                        format!("{}
+
+---
+
+{}", review.prompt.replace("{file_path}", file_path_str), file_content)
+                    } else {
+                        continue;
+                    }
+                };
+                
+                analyze_with_prompt(
+                    &format!("[{}/{}] {}: {}", review_index, review_count, review.name, review.description),
+                    content,
+                    config,
+                    client,
+                    tx,
+                ).await;
+                
+                review_index += 1;
             }
-        };
-
-        // B.1: Magic number detection
-        let _ = tx.send(AmbientEvent::Analysis(
-            "\n[3/4] Magic number detection:".to_string(),
-        ));
-        let prompt3 = format!(
-            "You are a code quality assistant. Analyze the following file `{file_path}` and identify any hard-coded constants (magic numbers). If any are found, suggest defining them as named constants. If none are found, say 'No magic numbers found'.\n\n---\n\n{content}"
-        );
-        if let Err(e) = run_analysis_prompt(prompt3, config, client, tx).await {
-            let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
         }
 
-        // B.2: Complexity/Duplication detection
-        let _ = tx.send(AmbientEvent::Analysis(
-            "\n[4/4] Complexity and duplication check:".to_string(),
-        ));
-        let prompt4 = format!(
-            "You are a code quality assistant. Analyze the following file `{file_path}` for overly complex functions or duplicated code blocks. If any are found, suggest refactoring or adding comments for clarity. If none are found, say 'No complexity or duplication issues found'.\n\n---\n\n{content}"
-        );
-        if let Err(e) = run_analysis_prompt(prompt4, config, client, tx).await {
-            let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
-        }
         let _ = tx.send(AmbientEvent::Analysis(format!(
-            "--- Finished analyzing: {file_path} ---\n"
+            "--- 分析完了: {file_path_str} ---\n"
         )));
     }
     Ok(())

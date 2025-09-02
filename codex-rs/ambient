@@ -1,0 +1,145 @@
+#!/bin/bash
+# Ambient Watcher - 簡単起動スクリプト
+
+# スクリプトのディレクトリを取得
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# カラーコード
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# initサブコマンドの処理
+if [[ "$1" == "init" ]]; then
+    # ambient-initスクリプトを直接実行
+    exec "$SCRIPT_DIR/ambient-init"
+fi
+
+# helpサブコマンドの処理
+if [[ "$1" == "help" ]] || [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    echo "Ambient Watcher - コードレビュー自動化ツール"
+    echo ""
+    echo "使い方:"
+    echo "  ambient          プロジェクトでAmbient Watcherを起動"
+    echo "  ambient init     プロジェクト設定ファイルを初期化"
+    echo "  ambient --open   起動してブラウザを開く"
+    echo "  ambient help     このヘルプを表示"
+    echo ""
+    echo "設定:"
+    echo "  グローバル: ~/.codex/ambient.toml"
+    echo "  プロジェクト: ./.ambient_watcher/config.toml"
+    echo ""
+    exit 0
+fi
+
+# 既存のAmbient Watcherプロセスをチェック
+check_existing_process() {
+    # ambient-watcherプロセスが動いているポートを探す
+    for port in {38080..38090}; do
+        if lsof -i :$port 2>/dev/null | grep -q "ambient-wa"; then
+            echo $port
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ブラウザを開く関数
+open_browser() {
+    local url=$1
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$url" 2>/dev/null &
+    elif command -v open &> /dev/null; then
+        open "$url" 2>/dev/null &
+    elif command -v wslview &> /dev/null; then
+        wslview "$url" 2>/dev/null &
+    else
+        echo -e "${YELLOW}ブラウザを開けませんでした。手動で開いてください: $url${NC}"
+    fi
+}
+
+# 既存のプロセスをチェック
+if existing_port=$(check_existing_process); then
+    echo -e "${GREEN}✓ Ambient Watcherは既に起動しています${NC}"
+    echo -e "${BLUE}  http://127.0.0.1:$existing_port${NC}"
+    
+    # --openオプションがある場合はブラウザを開く
+    if [[ "$1" == "--open" ]] || [[ "$1" == "-o" ]]; then
+        echo -e "${BLUE}ブラウザで開いています...${NC}"
+        open_browser "http://127.0.0.1:$existing_port"
+    fi
+    exit 0
+fi
+
+# Rustツールチェインの確認
+if ! command -v cargo &> /dev/null; then
+    echo "エラー: cargoが見つかりません。Rustをインストールしてください。"
+    echo "インストール方法: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    exit 1
+fi
+
+# Ollamaの確認
+if ! command -v ollama &> /dev/null; then
+    echo -e "${YELLOW}警告: ollamaが見つかりません。${NC}"
+    echo "Ambient WatcherはOllamaが必要です。"
+    echo "インストール方法: https://ollama.ai"
+    read -p "続行しますか？ (y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# ビルドが必要かチェック（ambient-watcherバイナリを使用）
+if [ ! -f "$SCRIPT_DIR/target/debug/ambient-watcher" ] || [ "$SCRIPT_DIR/target/debug/ambient-watcher" -ot "$SCRIPT_DIR/cli/src/ambient.rs" ]; then
+    echo "Ambient Watcherをビルドしています（開発用）..."
+    cd "$SCRIPT_DIR"
+    cargo build --bin ambient-watcher
+    if [ $? -ne 0 ]; then
+        echo "ビルドに失敗しました。"
+        exit 1
+    fi
+fi
+
+# 環境変数の設定
+export CODEX_OSS_BASE_URL="${CODEX_OSS_BASE_URL:-http://localhost:11434/v1}"
+
+# Ambient Watcherを起動
+echo -e "${GREEN}Ambient Watcherを起動しています...${NC}"
+cd "$SCRIPT_DIR"
+
+# バックグラウンドで起動
+"$SCRIPT_DIR/target/debug/ambient-watcher" ambient "$@" &
+PID=$!
+
+# プロセスが起動するまで待つ
+sleep 2
+
+# 起動確認
+if kill -0 $PID 2>/dev/null; then
+    # ポート番号を取得
+    for i in {1..10}; do
+        port=$(lsof -p $PID -i 2>/dev/null | grep "ambient-w.*LISTEN" | awk '{print $9}' | cut -d: -f2 | head -1)
+        if [ ! -z "$port" ]; then
+            echo -e "${GREEN}✓ Ambient Watcherが起動しました${NC}"
+            echo -e "${BLUE}  http://127.0.0.1:$port${NC}"
+            
+            # --openオプションがある場合はブラウザを開く
+            if [[ "$1" == "--open" ]] || [[ "$1" == "-o" ]]; then
+                echo -e "${BLUE}ブラウザで開いています...${NC}"
+                open_browser "http://127.0.0.1:$port"
+            fi
+            
+            echo ""
+            echo "終了するには: pkill -f ambient-watcher"
+            echo "ブラウザで開く: ./ambient --open"
+            exit 0
+        fi
+        sleep 0.5
+    done
+fi
+
+echo -e "${YELLOW}起動の確認ができませんでした${NC}"
+exit 1

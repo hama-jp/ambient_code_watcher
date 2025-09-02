@@ -69,6 +69,10 @@ Thumbs.db
 Icon?
 .Spotlight-V100/
 
+# project specific
+todo/
+test_file.txt
+
 # Unwanted package managers
 .yarn/
 yarn.lock

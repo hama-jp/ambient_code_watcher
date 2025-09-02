@@ -1,22 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Codex Ambient</title>
+    <title>Ambient Watcher</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
 </head>
 <body>
     <div id="container">
         <header>
-            <h1>Codex Ambient</h1>
-            <div id="status">Connecting...</div>
+            <h1>Ambient Watcher</h1>
+            <div class="header-info">
+                <div id="status">接続中...</div>
+                <div id="last-update">最終更新: --:--:--</div>
+            </div>
         </header>
         <div id="log-container"></div>
         <footer>
             <form id="query-form">
-                <input type="text" id="query-input" placeholder="Ask a question..." autocomplete="off">
-                <button type="submit">Send</button>
+                <input type="text" id="query-input" placeholder="質問を入力してください..." autocomplete="off">
+                <button type="submit">送信</button>
             </form>
         </footer>
     </div>
