@@ -47,5 +47,5 @@ codex-protocol-ts = { path = "../protocol-ts" }
 
 [dev-dependencies]
 wiremock = "0.6"
-tempfile = "3.10"
+tempfile = "3.21"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
