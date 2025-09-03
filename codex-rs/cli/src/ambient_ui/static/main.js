@@ -40,8 +40,6 @@ const CONFIG = {
 
 document.addEventListener('DOMContentLoaded', () => {
     const logContainer = document.getElementById('log-container');
-    const queryForm = document.getElementById('query-form');
-    const queryInput = document.getElementById('query-input');
     const statusDiv = document.getElementById('status');
     const lastUpdateDiv = document.getElementById('last-update');
 
@@ -207,31 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
     }
-
-    queryForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const query = queryInput.value.trim();
-        
-        if (!query) {
-            return;
-        }
-        
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
-            showMessage(UI_STRINGS.NOT_CONNECTED, CSS_CLASSES.WARNING);
-            return;
-        }
-        
-        if (query && socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(query);
-            queryInput.value = '';
-            // サーバーから UserQuery イベントが返ってくるので、ここでは表示しない
-            
-            // スクロールを最下部に
-            setTimeout(() => {
-                logContainer.scrollTop = logContainer.scrollHeight;
-            }, CONFIG.SCROLL_DELAY_MS);
-        }
-    });
 
     // ページ離脱時のクリーンアップ
     window.addEventListener('beforeunload', () => {
