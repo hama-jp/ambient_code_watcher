@@ -80,30 +80,28 @@ pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16, shutdown
     // 指定されたポートを試し、失敗したら次のポートを試す
     let mut try_port = port;
     let listener = loop {
-        match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", try_port)).await {
+        match tokio::net::TcpListener::bind(format!("127.0.0.1:{try_port}")).await {
             Ok(l) => break l,
             Err(_) if try_port < port + 10 => {
                 // 最大10ポート試す
-                eprintln!("ポート{}は使用中です。次のポートを試します...", try_port);
+                eprintln!("ポート{try_port}は使用中です。次のポートを試します...");
                 try_port += 1;
             }
             Err(e) => {
-                eprintln!("ポート{}へのバインドに失敗しました: {}", try_port, e);
+                eprintln!("ポート{try_port}へのバインドに失敗しました: {e}");
                 return;
             }
         }
     };
 
-    let actual_port = listener.local_addr().unwrap().port();
+    let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     if actual_port == port {
         println!(
-            "Ambient Code Watcherが http://127.0.0.1:{} で動作中です",
-            actual_port
+            "Ambient Code Watcherが http://127.0.0.1:{actual_port} で動作中です"
         );
     } else {
         println!(
-            "Ambient Code Watcherが http://127.0.0.1:{} で動作中です (設定ポート{}は使用中)",
-            actual_port, port
+            "Ambient Code Watcherが http://127.0.0.1:{actual_port} で動作中です (設定ポート{port}は使用中)"
         );
     }
 

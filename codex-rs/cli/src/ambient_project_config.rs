@@ -248,7 +248,7 @@ impl ProjectConfig {
         content.push_str("# 除外パターン\n");
         content.push_str("exclude_patterns = [\n");
         for pattern in &self.exclude_patterns {
-            content.push_str(&format!("    \"{}\",\n", pattern));
+            content.push_str(&format!("    \"{pattern}\",\n"));
         }
         content.push_str("]\n");
         content.push_str("custom_prompts = []\n");
@@ -256,7 +256,7 @@ impl ProjectConfig {
         // ファイル拡張子
         content.push_str("file_extensions = [\n");
         for ext in &self.file_extensions {
-            content.push_str(&format!("    \"{}\",\n", ext));
+            content.push_str(&format!("    \"{ext}\",\n"));
         }
         content.push_str("]\n");
         content.push_str("\n");
@@ -268,7 +268,7 @@ impl ProjectConfig {
             content.push_str(&format!("description = \"{}\"\n", review.description));
             content.push_str("file_patterns = [\n");
             for pattern in &review.file_patterns {
-                content.push_str(&format!("    \"{}\",\n", pattern));
+                content.push_str(&format!("    \"{pattern}\",\n"));
             }
             content.push_str("]\n");
             content.push_str(&format!("prompt = \"\"\"\n{}\"\"\"\n", review.prompt));
@@ -385,7 +385,7 @@ content = """
             // 簡単なglob実装
             if pattern.starts_with("*.") {
                 let ext = pattern.trim_start_matches("*.");
-                if file_path.ends_with(&format!(".{}", ext)) {
+                if file_path.ends_with(&format!(".{ext}")) {
                     return true;
                 }
             }

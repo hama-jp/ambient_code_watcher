@@ -17,7 +17,6 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use crate::ambient_server::{run_server, AmbientEvent};
-use crate::ambient_config::AmbientConfig;
 use crate::ambient_project_config::ProjectConfig;
 
 #[derive(Debug, Parser)]
@@ -109,11 +108,12 @@ fn init_project() -> Result<()> {
 }
 
 async fn run_ambient_watcher(cmd: AmbientCommand) -> Result<()> {
-    // 設定ファイルを読み込む
-    let ambient_config = AmbientConfig::load()?;
-    let check_interval = Duration::from_secs(ambient_config.check_interval_secs);
+    // プロジェクト設定を読み込む
+    let current_dir = std::env::current_dir()?;
+    let project_config = ProjectConfig::load_from_project(&current_dir)?;
+    let check_interval = Duration::from_secs(project_config.check_interval_secs);
     
-    println!("検出間隔: {}秒", ambient_config.check_interval_secs);
+    println!("検出間隔: {}秒", project_config.check_interval_secs);
 
     let mut cli_overrides = cmd
         .config_overrides
@@ -147,7 +147,7 @@ async fn run_ambient_watcher(cmd: AmbientCommand) -> Result<()> {
 
     // Start the web server in a separate task
     let server_tx = tx.clone();
-    let server_port = ambient_config.port;
+    let server_port = project_config.port;
     let server_handle = tokio::spawn(async move {
         run_server(server_tx, server_port, async move {
             let _ = shutdown_rx.await;
@@ -341,7 +341,7 @@ async fn analyze_with_prompt(
     client: &reqwest::Client,
     tx: &broadcast::Sender<AmbientEvent>,
 ) {
-    let _ = tx.send(AmbientEvent::Analysis(format!("\n{}", title)));
+    let _ = tx.send(AmbientEvent::Analysis(format!("\n{title}")));
     if let Err(e) = run_analysis_prompt(prompt, config, client, tx).await {
         let _ = tx.send(AmbientEvent::Analysis(format!("Error: {e}")));
     }
@@ -394,10 +394,10 @@ async fn perform_ambient_check(
     // すべてのdiffを一括で取得
     let mut all_diffs = HashMap::new();
     for file_path in &changed_files {
-        if let Ok(diff) = run_git_command(&["diff", "HEAD", "--", file_path], cwd) {
-            if !diff.trim().is_empty() {
-                all_diffs.insert(file_path.clone(), diff);
-            }
+        if let Ok(diff) = run_git_command(&["diff", "HEAD", "--", file_path], cwd)
+            && !diff.trim().is_empty()
+        {
+            all_diffs.insert(file_path.clone(), diff);
         }
     }
 
@@ -408,8 +408,7 @@ async fn perform_ambient_check(
         // 除外パターンをチェック
         if project_config.is_excluded(file_path_str) {
             let _ = tx.send(AmbientEvent::Analysis(format!(
-                "[スキップ] {} は除外パターンに一致",
-                file_path_str
+                "[スキップ] {file_path_str} は除外パターンに一致"
             )));
             continue;
         }
