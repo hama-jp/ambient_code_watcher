@@ -122,7 +122,7 @@ file_extensions = ["rs", "toml", "js", "ts", "py"]
 codex-rs/
 |-- cli/src/
 |   |-- ambient.rs              # Main logic
-|   |-- ambient_server.rs        # WebSocket server  
+|   |-- ambient_server.rs        # WebSocket server
 |   |-- ambient_config.rs        # Global configuration
 |   |-- ambient_project_config.rs # Project configuration
 |   +-- ambient_ui/              # Web UI files
