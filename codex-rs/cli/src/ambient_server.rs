@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AmbientEvent {
     Analysis(String),
@@ -34,15 +33,16 @@ struct AppState {
     project_root: String,
 }
 
-pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16, shutdown_signal: impl std::future::Future<Output = ()> + Send + 'static) {
+pub async fn run_server(
+    tx: broadcast::Sender<AmbientEvent>,
+    port: u16,
+    shutdown_signal: impl std::future::Future<Output = ()> + Send + 'static,
+) {
     let project_root = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
-    
-    let app_state = Arc::new(AppState { 
-        tx,
-        project_root,
-    });
+
+    let app_state = Arc::new(AppState { tx, project_root });
 
     // Serve static files from the `ambient_ui` directory.
     // Try multiple possible locations for the UI files
@@ -55,7 +55,7 @@ pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16, shutdown
         // When installed via install.sh
         format!("{}/.config/ambient/ui", home_dir),
     ];
-    
+
     let mut serve_dir_path = None;
     for path in &ui_paths {
         if std::path::Path::new(path).exists() {
@@ -63,14 +63,14 @@ pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16, shutdown
             break;
         }
     }
-    
+
     let serve_dir_path = serve_dir_path.unwrap_or_else(|| {
         eprintln!("警告: UIファイルが見つかりません。デフォルトパスを使用します。");
         "cli/src/ambient_ui".to_string()
     });
-    
-    let serve_dir = tower_http::services::ServeDir::new(serve_dir_path)
-        .append_index_html_on_directories(true);
+
+    let serve_dir =
+        tower_http::services::ServeDir::new(serve_dir_path).append_index_html_on_directories(true);
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
@@ -96,9 +96,7 @@ pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16, shutdown
 
     let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     if actual_port == port {
-        println!(
-            "Ambient Code Watcherが http://127.0.0.1:{actual_port} で動作中です"
-        );
+        println!("Ambient Code Watcherが http://127.0.0.1:{actual_port} で動作中です");
     } else {
         println!(
             "Ambient Code Watcherが http://127.0.0.1:{actual_port} で動作中です (設定ポート{port}は使用中)"
@@ -107,7 +105,7 @@ pub async fn run_server(tx: broadcast::Sender<AmbientEvent>, port: u16, shutdown
 
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
-        .await 
+        .await
     {
         eprintln!("Server error: {e}");
     }
@@ -133,7 +131,7 @@ async fn websocket(socket: WebSocket, state: Arc<AppState>) {
     {
         return; // Client disconnected.
     }
-    
+
     // Send project root path
     let project_root_msg = AmbientEvent::ProjectRoot(state.project_root.clone());
     if sender
@@ -147,11 +145,7 @@ async fn websocket(socket: WebSocket, state: Arc<AppState>) {
     // This task will forward broadcast messages to the client.
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            if sender
-                .send(Message::Text(msg.to_json()))
-                .await
-                .is_err()
-            {
+            if sender.send(Message::Text(msg.to_json())).await.is_err() {
                 break; // Client disconnected.
             }
         }
