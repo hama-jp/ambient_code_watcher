@@ -16,18 +16,18 @@ use std::process::Command;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
-use crate::ambient_server::{run_server, AmbientEvent};
 use crate::ambient_project_config::ProjectConfig;
+use crate::ambient_server::{AmbientEvent, run_server};
 
 #[derive(Debug, Parser)]
 pub struct AmbientCommand {
     #[clap(subcommand)]
     pub subcommand: Option<AmbientSubcommand>,
-    
+
     /// Open the web UI in the default browser after starting the server
     #[clap(long)]
     pub open: bool,
-    
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
@@ -44,22 +44,20 @@ pub async fn run_main(cmd: AmbientCommand) -> Result<()> {
             init_project()?;
             Ok(())
         }
-        None => {
-            run_ambient_watcher(cmd).await
-        }
+        None => run_ambient_watcher(cmd).await,
     }
 }
 
 fn init_project() -> Result<()> {
     let current_dir = std::env::current_dir()?;
     let config_dir = current_dir.join(".ambient");
-    
+
     // Check if already initialized
     if config_dir.exists() {
         println!("すでに初期化されています: {}", config_dir.display());
         return Ok(());
     }
-    
+
     // Check if Git repository exists
     let git_dir = current_dir.join(".git");
     if !git_dir.exists() {
@@ -70,16 +68,19 @@ fn init_project() -> Result<()> {
             .output()?;
         println!("✓ Gitリポジトリを初期化しました");
     }
-    
+
     // Create .ambient directory
     fs::create_dir_all(&config_dir)?;
     println!("✓ ディレクトリを作成しました: {}", config_dir.display());
-    
+
     // Create default configuration
     let default_config = ProjectConfig::default();
     default_config.save_to_project(&current_dir)?;
-    println!("✓ 設定ファイルを作成しました: {}/config.toml", config_dir.display());
-    
+    println!(
+        "✓ 設定ファイルを作成しました: {}/config.toml",
+        config_dir.display()
+    );
+
     // Add to .gitignore if needed
     let gitignore_path = current_dir.join(".gitignore");
     let mut gitignore_content = if gitignore_path.exists() {
@@ -87,7 +88,7 @@ fn init_project() -> Result<()> {
     } else {
         String::new()
     };
-    
+
     if !gitignore_content.contains(".ambient/") {
         if !gitignore_content.is_empty() && !gitignore_content.ends_with('\n') {
             gitignore_content.push('\n');
@@ -97,13 +98,13 @@ fn init_project() -> Result<()> {
         fs::write(&gitignore_path, gitignore_content)?;
         println!("✓ .gitignoreに.ambient/を追加しました");
     }
-    
+
     println!("\n初期化が完了しました！");
     println!("設定ファイル: {}/config.toml", config_dir.display());
     println!("\n使い方:");
     println!("  ambient          # Ambient Code Watcherを起動");
     println!("  ambient --help   # ヘルプを表示");
-    
+
     Ok(())
 }
 
@@ -112,30 +113,36 @@ async fn run_ambient_watcher(cmd: AmbientCommand) -> Result<()> {
     let current_dir = std::env::current_dir()?;
     let project_config = ProjectConfig::load_from_project(&current_dir)?;
     let check_interval = Duration::from_secs(project_config.check_interval_secs);
-    
+
     println!("検出間隔: {}秒", project_config.check_interval_secs);
 
     let mut cli_overrides = cmd
         .config_overrides
         .parse_overrides()
         .map_err(|e| anyhow::anyhow!(e))?;
-    
+
     // Force OSS provider for ambient mode
     // Note: We need to use toml::Value here, not serde_json::Value
     use toml::Value;
-    cli_overrides.push(("model_provider_id".to_string(), Value::String("oss".to_string())));
-    cli_overrides.push(("model".to_string(), Value::String("gpt-oss:20b".to_string())));
-    
+    cli_overrides.push((
+        "model_provider_id".to_string(),
+        Value::String("oss".to_string()),
+    ));
+    cli_overrides.push((
+        "model".to_string(),
+        Value::String("gpt-oss:20b".to_string()),
+    ));
+
     let mut config = Config::load_with_cli_overrides(cli_overrides, Default::default())?;
-    
+
     // Force set the provider ID after loading
     config.model_provider_id = "oss".to_string();
-    
+
     // Also update the model_provider field to match the OSS provider
     if let Some(oss_provider) = config.model_providers.get("oss") {
         config.model_provider = oss_provider.clone();
     }
-    
+
     let client = reqwest::Client::new();
     let cwd = std::env::current_dir()?;
 
@@ -151,7 +158,8 @@ async fn run_ambient_watcher(cmd: AmbientCommand) -> Result<()> {
     let server_handle = tokio::spawn(async move {
         run_server(server_tx, server_port, async move {
             let _ = shutdown_rx.await;
-        }).await;
+        })
+        .await;
     });
 
     let mut ticker = tokio::time::interval(check_interval);
@@ -189,7 +197,7 @@ async fn run_ambient_watcher(cmd: AmbientCommand) -> Result<()> {
 
     // Shutdown the server
     let _ = shutdown_tx.send(());
-    
+
     // Wait for the server to finish
     let _ = tokio::time::timeout(Duration::from_secs(5), server_handle).await;
 
@@ -320,16 +328,13 @@ async fn run_analysis_prompt(
 
 // ヘルパー関数: Gitコマンドの実行と結果チェック
 fn run_git_command(args: &[&str], cwd: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()?;
-    
+    let output = Command::new("git").args(args).current_dir(cwd).output()?;
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow::anyhow!("Git command failed: {}", stderr));
     }
-    
+
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -355,13 +360,13 @@ async fn perform_ambient_check(
 ) -> Result<()> {
     // プロジェクト設定を読み込み
     let project_config = ProjectConfig::load_from_project(cwd).unwrap_or_default();
-    
+
     if !project_config.enabled {
         return Ok(());
     }
     // Git statusを一度だけ実行
     let status_output = run_git_command(&["status", "--porcelain"], cwd)?;
-    
+
     if status_output.trim().is_empty() {
         return Ok(());
     }
@@ -376,12 +381,12 @@ async fn perform_ambient_check(
         );
         let _ = tx.send(AmbientEvent::Analysis(msg));
     }
-    
+
     // Git rootを一度だけ取得
     let git_root = run_git_command(&["rev-parse", "--show-toplevel"], cwd)?
         .trim()
         .to_string();
-    
+
     // 変更されたファイルを収集
     let mut changed_files = Vec::new();
     for line in lines {
@@ -390,7 +395,7 @@ async fn perform_ambient_check(
             changed_files.push(parts[1].to_string());
         }
     }
-    
+
     // すべてのdiffを一括で取得
     let mut all_diffs = HashMap::new();
     for file_path in &changed_files {
@@ -404,7 +409,7 @@ async fn perform_ambient_check(
     // 各ファイルを分析
     for file_path in changed_files {
         let file_path_str = file_path.as_str();
-        
+
         // 除外パターンをチェック
         if project_config.is_excluded(file_path_str) {
             let _ = tx.send(AmbientEvent::Analysis(format!(
@@ -418,7 +423,7 @@ async fn perform_ambient_check(
 
         // プロジェクト設定に基づいたレビューを実行
         let reviews = project_config.get_reviews_for_file(file_path_str);
-        
+
         if reviews.is_empty() {
             // デフォルトのレビューを実行
             if let Some(diff_content) = all_diffs.get(&file_path) {
@@ -432,7 +437,8 @@ async fn perform_ambient_check(
                     config,
                     client,
                     tx,
-                ).await;
+                )
+                .await;
 
                 // セキュリティリスクの検出
                 let prompt2 = format!(
@@ -444,41 +450,54 @@ async fn perform_ambient_check(
                     config,
                     client,
                     tx,
-                ).await;
+                )
+                .await;
             }
         } else {
             // カスタムレビューを実行
             let review_count = reviews.len();
             let mut review_index = 1;
-            
+
             for review in reviews {
                 let content = if let Some(diff_content) = all_diffs.get(&file_path) {
-                    format!("{}
+                    format!(
+                        "{}
 
 ---
 
-{}", review.prompt.replace("{file_path}", file_path_str), diff_content)
+{}",
+                        review.prompt.replace("{file_path}", file_path_str),
+                        diff_content
+                    )
                 } else {
                     let full_path = std::path::Path::new(&git_root).join(&file_path);
                     if let Ok(file_content) = fs::read_to_string(&full_path) {
-                        format!("{}
+                        format!(
+                            "{}
 
 ---
 
-{}", review.prompt.replace("{file_path}", file_path_str), file_content)
+{}",
+                            review.prompt.replace("{file_path}", file_path_str),
+                            file_content
+                        )
                     } else {
                         continue;
                     }
                 };
-                
+
                 analyze_with_prompt(
-                    &format!("[{}/{}] {}: {}", review_index, review_count, review.name, review.description),
+                    &format!(
+                        "[{}/{}] {}: {}",
+                        review_index, review_count, review.name, review.description
+                    ),
                     content,
                     config,
                     client,
                     tx,
-                ).await;
-                
+                )
+                .await;
+
                 review_index += 1;
             }
         }
@@ -493,8 +512,8 @@ async fn perform_ambient_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_core::ModelProviderInfo;
     use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
+    use codex_core::ModelProviderInfo;
     use codex_core::WireApi;
     use codex_core::config_types::History;
     use codex_core::config_types::ShellEnvironmentPolicy;

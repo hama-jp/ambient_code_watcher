@@ -7,11 +7,11 @@ use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
 use codex_cli::LandlockCommand;
 use codex_cli::SeatbeltCommand;
+use codex_cli::ambient;
 use codex_cli::login::run_login_status;
 use codex_cli::login::run_login_with_api_key;
 use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_logout;
-use codex_cli::ambient;
 use codex_cli::proto;
 use codex_common::CliConfigOverrides;
 use codex_exec::Cli as ExecCli;
@@ -19,7 +19,6 @@ use codex_tui::Cli as TuiCli;
 use std::path::PathBuf;
 
 use crate::proto::ProtoCli;
-
 
 /// Codex CLI
 ///

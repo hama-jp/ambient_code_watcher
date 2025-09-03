@@ -2,13 +2,14 @@
 edition = "2024"
 name = "codex-cli"
 version = { workspace = true }
+default-run = "codex"
 
 [[bin]]
 name = "codex"
 path = "src/main.rs"
 
 [[bin]]
-name = "ambient-watcher"
+name = "ambient"
 path = "src/main.rs"
 
 [lib]
