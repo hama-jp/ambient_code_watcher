@@ -9,31 +9,31 @@ pub struct ProjectConfig {
     /// Ollama設定
     #[serde(default)]
     pub ollama: OllamaConfig,
-    
+
     /// ファイル変更の検出間隔（秒）
     #[serde(default = "default_check_interval")]
     pub check_interval_secs: u64,
-    
+
     /// Web UIのポート番号
     #[serde(default = "default_port")]
     pub port: u16,
-    
+
     /// レビューを有効にするかどうか
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    
+
     /// 除外パターン
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
-    
+
     /// カスタムプロンプト
     #[serde(default)]
     pub custom_prompts: Vec<CustomPrompt>,
-    
+
     /// 分析を有効にする拡張子のリスト
     #[serde(default = "default_file_extensions")]
     pub file_extensions: Vec<String>,
-    
+
     /// レビュー設定
     #[serde(default)]
     pub reviews: Vec<ReviewConfig>,
@@ -45,7 +45,7 @@ pub struct OllamaConfig {
     /// OllamaのベースURL
     #[serde(default = "default_ollama_base_url")]
     pub base_url: String,
-    
+
     /// 使用するモデル名
     #[serde(default = "default_ollama_model")]
     pub model: String,
@@ -56,21 +56,21 @@ pub struct OllamaConfig {
 pub struct ReviewConfig {
     /// レビューの名前
     pub name: String,
-    
+
     /// レビューの説明
     #[serde(default)]
     pub description: String,
-    
+
     /// このレビューを適用するファイルパターン
     pub file_patterns: Vec<String>,
-    
+
     /// レビューのプロンプト
     pub prompt: String,
-    
+
     /// 優先度（高い順に実行）
     #[serde(default = "default_priority")]
     pub priority: u32,
-    
+
     /// このレビューを有効にするか
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -81,7 +81,7 @@ pub struct ReviewConfig {
 pub struct CustomPrompt {
     /// プロンプトID
     pub id: String,
-    
+
     /// プロンプトの内容
     pub content: String,
 }
@@ -209,7 +209,7 @@ impl ProjectConfig {
     pub fn load_from_project(project_path: &Path) -> Result<Self> {
         let config_dir = project_path.join(".ambient");
         let config_file = config_dir.join("config.toml");
-        
+
         if config_file.exists() {
             let content = fs::read_to_string(&config_file)?;
             let config: Self = toml::from_str(&content)?;
@@ -219,31 +219,34 @@ impl ProjectConfig {
             Ok(Self::default())
         }
     }
-    
+
     /// プロジェクト設定を保存する
     pub fn save_to_project(&self, project_path: &Path) -> Result<()> {
         let config_dir = project_path.join(".ambient");
         fs::create_dir_all(&config_dir)?;
-        
+
         let config_file = config_dir.join("config.toml");
-        
+
         // TOMLの順序を制御するために手動でフォーマット
         let mut content = String::new();
-        
+
         // Ollama設定を最初に配置
         content.push_str("# Ollama設定\n");
         content.push_str("[ollama]\n");
         content.push_str(&format!("base_url = \"{}\"\n", self.ollama.base_url));
         content.push_str(&format!("model = \"{}\"\n", self.ollama.model));
-        content.push_str("\n");
-        
+        content.push('\n');
+
         // 基本設定
         content.push_str("# 基本設定\n");
-        content.push_str(&format!("check_interval_secs = {}\n", self.check_interval_secs));
+        content.push_str(&format!(
+            "check_interval_secs = {}\n",
+            self.check_interval_secs
+        ));
         content.push_str(&format!("port = {}\n", self.port));
         content.push_str(&format!("enabled = {}\n", self.enabled));
-        content.push_str("\n");
-        
+        content.push('\n');
+
         // 除外パターン
         content.push_str("# 除外パターン\n");
         content.push_str("exclude_patterns = [\n");
@@ -252,15 +255,15 @@ impl ProjectConfig {
         }
         content.push_str("]\n");
         content.push_str("custom_prompts = []\n");
-        
+
         // ファイル拡張子
         content.push_str("file_extensions = [\n");
         for ext in &self.file_extensions {
             content.push_str(&format!("    \"{ext}\",\n"));
         }
         content.push_str("]\n");
-        content.push_str("\n");
-        
+        content.push('\n');
+
         // レビュー設定
         for review in &self.reviews {
             content.push_str("[[reviews]]\n");
@@ -274,19 +277,19 @@ impl ProjectConfig {
             content.push_str(&format!("prompt = \"\"\"\n{}\"\"\"\n", review.prompt));
             content.push_str(&format!("priority = {}\n", review.priority));
             content.push_str(&format!("enabled = {}\n", review.enabled));
-            content.push_str("\n");
+            content.push('\n');
         }
-        
+
         fs::write(&config_file, content)?;
-        
+
         Ok(())
     }
-    
+
     /// サンプル設定ファイルを生成
     pub fn create_sample(project_path: &Path) -> Result<()> {
         let config = Self::default();
         config.save_to_project(project_path)?;
-        
+
         // READMEも作成
         let config_dir = project_path.join(".ambient");
         let readme_path = config_dir.join("README.md");
@@ -359,29 +362,30 @@ content = """
 ```
 "#;
         fs::write(&readme_path, readme_content)?;
-        
+
         Ok(())
     }
-    
+
     /// ファイルパスに適用するレビューを取得
     pub fn get_reviews_for_file(&self, file_path: &str) -> Vec<&ReviewConfig> {
-        let mut reviews: Vec<&ReviewConfig> = self.reviews
+        let mut reviews: Vec<&ReviewConfig> = self
+            .reviews
             .iter()
             .filter(|r| r.enabled && self.matches_patterns(file_path, &r.file_patterns))
             .collect();
-        
+
         // 優先度順にソート（高い順）
         reviews.sort_by(|a, b| b.priority.cmp(&a.priority));
         reviews
     }
-    
+
     /// ファイルパスがパターンにマッチするか
     fn matches_patterns(&self, file_path: &str, patterns: &[String]) -> bool {
         for pattern in patterns {
             if pattern == "*" {
                 return true;
             }
-            
+
             // 簡単なglob実装
             if pattern.starts_with("*.") {
                 let ext = pattern.trim_start_matches("*.");
@@ -389,21 +393,24 @@ content = """
                     return true;
                 }
             }
-            
+
             if pattern.ends_with("/**") {
                 let prefix = pattern.trim_end_matches("/**");
                 if file_path.starts_with(prefix) {
                     return true;
                 }
             }
-            
-            if glob::Pattern::new(pattern).ok().map_or(false, |p| p.matches(file_path)) {
+
+            if glob::Pattern::new(pattern)
+                .ok()
+                .is_some_and(|p| p.matches(file_path))
+            {
                 return true;
             }
         }
         false
     }
-    
+
     /// ファイルが除外パターンにマッチするか
     pub fn is_excluded(&self, file_path: &str) -> bool {
         self.matches_patterns(file_path, &self.exclude_patterns)
