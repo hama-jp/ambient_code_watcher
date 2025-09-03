@@ -2,6 +2,7 @@
 edition = "2024"
 name = "codex-cli"
 version = { workspace = true }
+default-run = "codex"
 
 [[bin]]
 name = "codex"
