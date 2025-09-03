@@ -28,8 +28,8 @@ Ambient Watcherは、コード変更を自動的に検出し、ローカルLLM�
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/yourusername/codex.git
-cd codex/codex-rs
+git clone https://github.com/hama-jp/ambient_code_watcher.git
+cd ambient_code_watcher/codex-rs
 
 # 自動インストール（推奨）
 ./install.sh
@@ -80,7 +80,6 @@ ambient --open
 起動後、`http://localhost:38080` でWeb UIにアクセスできます。
 
 - リアルタイムでレビュー結果を表示
-- 下部の入力欄から質問可能
 - Markdown形式の整形された出力
 
 ## 設定

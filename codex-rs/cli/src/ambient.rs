@@ -25,6 +25,10 @@ pub struct AmbientCommand {
     #[clap(subcommand)]
     pub subcommand: Option<AmbientSubcommand>,
     
+    /// Open the web UI in the default browser after starting the server
+    #[clap(long)]
+    pub open: bool,
+    
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
