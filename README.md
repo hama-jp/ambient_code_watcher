@@ -10,7 +10,6 @@ Real-time code review assistant based on [Codex](https://github.com/anthropics/c
 Ambient Watcher is a tool that automatically detects code changes and performs real-time code reviews using local LLM (Ollama). You can view review results and ask interactive questions through the Web UI.
 
 ## Features
-
 - **Automatic Code Review** - Automatically reviews Git changes upon detection
 - **Interactive Questions** - Ask specific questions directly from Web UI  
 - **Flexible Configuration** - Customize review perspectives per project
@@ -128,6 +127,7 @@ codex-rs/
 |   +-- ambient_ui/              # Web UI files
 |-- ambient                      # Launch script
 +-- ambient-init                 # Initialization script
+
 ```
 
 ## Customization
