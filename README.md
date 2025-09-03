@@ -1,205 +1,209 @@
 # Ambient Code Watcher
 
-リアルタイムコードレビュー支援ツール - [Codex](https://github.com/anthropics/codex)をベースに開発
+Real-time code review assistant based on [Codex](https://github.com/anthropics/codex)
 
-> **Note**: オリジナルのCodex READMEは[ORIGINAL_README.md](ORIGINAL_README.md)をご覧ください。
+> **Note**: See [ORIGINAL_README.md](ORIGINAL_README.md) for the original Codex README.
+> **Japanese Version**: See [README.ja.md](README.ja.md)
 
-## 概要
+## Overview
 
-Ambient Watcherは、コード変更を自動的に検出し、ローカルLLM（Ollama）を使用してリアルタイムでコードレビューを行うツールです。Web UIを通じて、レビュー結果の確認や対話的な質問が可能です。
+Ambient Watcher is a tool that automatically detects code changes and performs real-time code reviews using local LLM (Ollama). You can view review results and ask interactive questions through the Web UI.
 
-## 特徴
+## Features
 
-- 🔍 **自動コードレビュー** - Git変更を検出して自動的にレビュー
-- 💬 **対話的な質問** - Web UIから特定の疑問を直接質問
-- ⚙️ **柔軟な設定** - プロジェクトごとにレビュー観点をカスタマイズ
-- 🌐 **Web UI** - ブラウザベースの使いやすいインターフェース
-- 🔒 **プライバシー重視** - すべての処理はローカルで完結
+- **Automatic Code Review** - Automatically reviews Git changes upon detection
+- **Interactive Questions** - Ask specific questions directly from Web UI  
+- **Flexible Configuration** - Customize review perspectives per project
+- **Web UI** - User-friendly browser-based interface
+- **Privacy First** - All processing done locally
 
-## インストール
+## Installation
 
-### 前提条件
+### Prerequisites
 
-- Rust (1.70以降)
-- [Ollama](https://ollama.ai/) 
+- Rust (1.70 or later)
+- [Ollama](https://ollama.ai/) (for local LLM execution)
 - Git
 
-### セットアップ
+### Setup
 
 ```bash
-# リポジトリをクローン
+# Clone repository
 git clone https://github.com/hama-jp/ambient_code_watcher.git
-cd ambient_code_watcher/codex-rs
+cd ambient_code_watcher
 
-# 自動インストール（推奨）
+# Automatic installation (recommended)
 ./install.sh
 
-# または手動ビルド
-cargo build --release --bin ambient-watcher
+# Or manual build
+cd codex-rs && cargo build --release
 
-# Ollamaモデルをダウンロード（推奨）
-ollama pull gpt-oss:20b
+# Download Ollama model (recommended)
+ollama pull llama3.2
 ```
 
-### インストールスクリプト
+### Install Script
 
-`install.sh`を使用すると以下が自動的に設定されます：
+`install.sh` automatically configures:
 
-- 実行ファイルを`~/.local/bin/`にインストール
-- `ambient`コマンドをグローバルに利用可能に
-- デフォルト設定ファイルの作成
-- PATH設定の案内
+- Installs executable to `~/.local/bin/`
+- Makes `ambient` command globally available  
+- Creates default configuration files
+- Provides PATH setup instructions
 
 ```bash
-# インストール
-./install.sh　
-# ビルドにちょっと時間かかります。
+# Install
+./install.sh
+# Build takes a little time
 
-
-# アンインストール
-./uninstall.sh
+# Uninstall  
+./install.sh --uninstall
 ```
 
-## 使い方
+## Usage
 
-### 基本的な使用方法
+### Basic Usage
 
 ```bash
-# プロジェクトで初回設定
+# Initial setup in project
 ambient init
 
-# Ambient Watcherを起動
+# Start Ambient Watcher
 ambient
 
-# ブラウザも自動で開く
+# Also opens browser automatically
 ambient --open
 ```
 
 ### Web UI
 
-起動後、`http://localhost:38080` でWeb UIにアクセスできます。
+After starting, access Web UI at `http://localhost:38080`.
 
-- リアルタイムでレビュー結果を表示
-- Markdown形式の整形された出力
+- Real-time review results display
+- Formatted Markdown output
 
-## 設定
+## Configuration
 
-### プロジェクト設定 (`.ambient_watcher/config.toml`)
+### Project Configuration (`.ambient/config.toml`)
 
 ```toml
 [[reviews]]
-name = "カスタムレビュー"
-description = "プロジェクト固有のレビュー"
+name = "Custom Review"
+description = "Project-specific review"
 file_patterns = ["src/**/*.rs"]
-priority = 200
-enabled = true
 prompt = """
-以下の観点でレビューしてください：
-1. エラーハンドリング
-2. パフォーマンス
-3. セキュリティ
+Please review with the following perspectives:
+1. Error handling
+2. Performance
+3. Security
 """
+priority = 300
+enabled = true
 ```
 
-### グローバル設定 (`~/.codex/ambient.toml`)
+### Server Configuration
+
+Server settings are also managed in `.ambient/config.toml`:
 
 ```toml
-# チェック間隔（秒）
+# File change detection interval (seconds)
 check_interval_secs = 60
 
-# WebUIのポート
+# Web UI port number
 port = 38080
+
+# List of file extensions to analyze
+file_extensions = ["rs", "toml", "js", "ts", "py"]
 ```
 
-## プロジェクト構成
+## Project Structure
 
 ```
 codex-rs/
-├── cli/src/
-│   ├── ambient.rs              # メインロジック
-│   ├── ambient_server.rs        # WebSocketサーバー
-│   ├── ambient_config.rs        # グローバル設定
-│   ├── ambient_project_config.rs # プロジェクト設定
-│   └── ambient_ui/              # Web UIファイル
-├── ambient                      # 起動スクリプト
-└── ambient-init                 # 初期化スクリプト
+|-- cli/src/
+|   |-- ambient.rs              # Main logic
+|   |-- ambient_server.rs        # WebSocket server
+|   |-- ambient_config.rs        # Global configuration
+|   |-- ambient_project_config.rs # Project configuration
+|   +-- ambient_ui/              # Web UI files
+|-- ambient                      # Launch script
++-- ambient-init                 # Initialization script
 ```
 
-## カスタマイズ
+## Customization
 
-### レビュー観点の追加
+### Adding Review Perspectives
 
-`.ambient_watcher/config.toml`を編集して、独自のレビュー観点を追加できます：
+Edit `.ambient/config.toml` to add custom review perspectives:
 
-- `file_patterns`: 対象ファイルのパターン
-- `priority`: 実行優先度（高い値が優先）
-- `prompt`: レビュー時のプロンプト
+- `file_patterns`: Target file patterns
+- `priority`: Execution priority (higher values prioritized)
+- `prompt`: Review prompt
 
-### 除外パターン
+### Exclusion Patterns
 
-特定のファイルやディレクトリを除外：
+Exclude specific files or directories:
 
 ```toml
 exclude_patterns = [
     "target/**",
-    "*.generated.rs",
-    "tests/**"
+    "node_modules/**",
+    "*.generated.rs"
 ]
 ```
 
-## システム停止
+## Stopping the System
 
-### Ambient Watcherの停止
+### Stop Ambient Watcher
+
 ```bash
-# Ambient Watcherを停止（Ctrl+Cまたは）
-pkill ambient
+# Stop Ambient Watcher (Ctrl+C or)
+pkill -f "ambient"
 ```
 
-### Ollamaの停止
-```bash
-# Ollamaサービスを停止
-sudo systemctl stop ollama
+### Stop Ollama
 
-# または手動でプロセスを終了
-sudo pkill ollama
+```bash
+# Stop Ollama service
+systemctl stop ollama
+
+# Or manually terminate process
+pkill ollama
 ```
 
-## トラブルシューティング
+## Troubleshooting
 
-### ポートが使用中の場合
-Ambient Watcherは自動的に次のポート（38081, 38082...）を試します。
+### Port Already in Use
+Ambient Watcher automatically tries next ports (38081, 38082...).
 
-### Ollamaが動作しない場合
+### Ollama Not Working
+
 ```bash
-# Ollamaの状態確認
+# Check Ollama status
 ollama list
 
-# サービスの再起動
+# Restart service
 ollama serve
 ```
 
-## セキュリティとプライバシー
+## Security and Privacy
 
-- すべての処理はローカルで実行
-- 外部サーバーへのコード送信なし
-- XSS対策としてDOMPurifyを使用
-- プロジェクト設定は`.ambient_watcher/`に保存
+- All processing done locally
+- No code sent to external servers
+- Uses DOMPurify for XSS protection
+- Project settings saved in `.ambient/`
 
-## ライセンス
+## License
 
-このプロジェクトは[Codex](https://github.com/anthropics/codex)をベースに開発されています。
-オリジナルのCodexプロジェクトのライセンス条項に従います。
+This project is developed based on [Codex](https://github.com/anthropics/codex).
+Follows the license terms of the original Codex project.
 
-## 謝辞
+## Acknowledgments
 
-- [Anthropic Codex](https://github.com/anthropics/codex) - 本プロジェクトのベース
-- [Ollama](https://ollama.ai/) - ローカルLLM実行環境
-- すべてのコントリビューター
+- [Anthropic Codex](https://github.com/anthropics/codex) - Base of this project
+- [Ollama](https://ollama.ai/) - Local LLM execution environment
+- All contributors
 
-## コントリビューション
+## Contributing
 
-Issue報告やPull Requestを歓迎します。大きな変更の場合は、事前にIssueで議論をお願いします。
-
----
-
-*Ambient Watcher - Making code review ambient and effortless*
+Issue reports and Pull Requests are welcome. For major changes, please discuss in an Issue first.
