@@ -57,7 +57,7 @@ jobs:
         working-directory: codex-rs
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.89
+      - uses: dtolnay/rust-toolchain@1.100
         with:
           components: rustfmt
       - name: cargo fmt
@@ -117,7 +117,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.89
+      - uses: dtolnay/rust-toolchain@1.100
         with:
           targets: ${{ matrix.target }}
           components: clippy
