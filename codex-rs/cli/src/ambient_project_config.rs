@@ -1,14 +1,26 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// プロジェクトごとのAmbient Code Watcher設定
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProjectConfig {
-    /// レビュー設定
+    /// Ollama設定
     #[serde(default)]
-    pub reviews: Vec<ReviewConfig>,
+    pub ollama: OllamaConfig,
+    
+    /// ファイル変更の検出間隔（秒）
+    #[serde(default = "default_check_interval")]
+    pub check_interval_secs: u64,
+    
+    /// Web UIのポート番号
+    #[serde(default = "default_port")]
+    pub port: u16,
+    
+    /// レビューを有効にするかどうか
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     
     /// 除外パターン
     #[serde(default)]
@@ -18,9 +30,25 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub custom_prompts: Vec<CustomPrompt>,
     
-    /// レビューを有効にするかどうか
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
+    /// 分析を有効にする拡張子のリスト
+    #[serde(default = "default_file_extensions")]
+    pub file_extensions: Vec<String>,
+    
+    /// レビュー設定
+    #[serde(default)]
+    pub reviews: Vec<ReviewConfig>,
+}
+
+/// Ollama設定
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OllamaConfig {
+    /// OllamaのベースURL
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    
+    /// 使用するモデル名
+    #[serde(default = "default_ollama_model")]
+    pub model: String,
 }
 
 /// 個別のレビュー設定
@@ -62,13 +90,90 @@ fn default_enabled() -> bool {
     true
 }
 
+fn default_check_interval() -> u64 {
+    60 // デフォルト60秒
+}
+
+fn default_port() -> u16 {
+    38080
+}
+
+fn default_file_extensions() -> Vec<String> {
+    vec![
+        "rs".to_string(),
+        "toml".to_string(),
+        "js".to_string(),
+        "ts".to_string(),
+        "jsx".to_string(),
+        "tsx".to_string(),
+        "py".to_string(),
+        "go".to_string(),
+        "java".to_string(),
+        "cpp".to_string(),
+        "c".to_string(),
+        "h".to_string(),
+        "hpp".to_string(),
+        "cs".to_string(),
+        "rb".to_string(),
+        "php".to_string(),
+        "swift".to_string(),
+        "kt".to_string(),
+        "scala".to_string(),
+        "sh".to_string(),
+        "bash".to_string(),
+        "zsh".to_string(),
+        "fish".to_string(),
+        "yml".to_string(),
+        "yaml".to_string(),
+        "json".to_string(),
+        "xml".to_string(),
+        "html".to_string(),
+        "css".to_string(),
+        "scss".to_string(),
+        "sass".to_string(),
+        "less".to_string(),
+        "sql".to_string(),
+        "md".to_string(),
+        "mdx".to_string(),
+    ]
+}
+
 fn default_priority() -> u32 {
     100
+}
+
+fn default_ollama_base_url() -> String {
+    "http://localhost:11434/v1".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "gpt-oss:20b".to_string()
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_ollama_base_url(),
+            model: default_ollama_model(),
+        }
+    }
 }
 
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
+            ollama: OllamaConfig::default(),
+            check_interval_secs: default_check_interval(),
+            port: default_port(),
+            enabled: true,
+            exclude_patterns: vec![
+                "target/**".to_string(),
+                "node_modules/**".to_string(),
+                ".git/**".to_string(),
+                "*.min.js".to_string(),
+            ],
+            custom_prompts: vec![],
+            file_extensions: default_file_extensions(),
             reviews: vec![
                 ReviewConfig {
                     name: "構文エラー・型エラーチェック".to_string(),
@@ -95,14 +200,6 @@ impl Default for ProjectConfig {
                     enabled: true,
                 },
             ],
-            exclude_patterns: vec![
-                "target/**".to_string(),
-                "node_modules/**".to_string(),
-                ".git/**".to_string(),
-                "*.min.js".to_string(),
-            ],
-            custom_prompts: vec![],
-            enabled: true,
         }
     }
 }
@@ -129,7 +226,57 @@ impl ProjectConfig {
         fs::create_dir_all(&config_dir)?;
         
         let config_file = config_dir.join("config.toml");
-        let content = toml::to_string_pretty(self)?;
+        
+        // TOMLの順序を制御するために手動でフォーマット
+        let mut content = String::new();
+        
+        // Ollama設定を最初に配置
+        content.push_str("# Ollama設定\n");
+        content.push_str("[ollama]\n");
+        content.push_str(&format!("base_url = \"{}\"\n", self.ollama.base_url));
+        content.push_str(&format!("model = \"{}\"\n", self.ollama.model));
+        content.push_str("\n");
+        
+        // 基本設定
+        content.push_str("# 基本設定\n");
+        content.push_str(&format!("check_interval_secs = {}\n", self.check_interval_secs));
+        content.push_str(&format!("port = {}\n", self.port));
+        content.push_str(&format!("enabled = {}\n", self.enabled));
+        content.push_str("\n");
+        
+        // 除外パターン
+        content.push_str("# 除外パターン\n");
+        content.push_str("exclude_patterns = [\n");
+        for pattern in &self.exclude_patterns {
+            content.push_str(&format!("    \"{}\",\n", pattern));
+        }
+        content.push_str("]\n");
+        content.push_str("custom_prompts = []\n");
+        
+        // ファイル拡張子
+        content.push_str("file_extensions = [\n");
+        for ext in &self.file_extensions {
+            content.push_str(&format!("    \"{}\",\n", ext));
+        }
+        content.push_str("]\n");
+        content.push_str("\n");
+        
+        // レビュー設定
+        for review in &self.reviews {
+            content.push_str("[[reviews]]\n");
+            content.push_str(&format!("name = \"{}\"\n", review.name));
+            content.push_str(&format!("description = \"{}\"\n", review.description));
+            content.push_str("file_patterns = [\n");
+            for pattern in &review.file_patterns {
+                content.push_str(&format!("    \"{}\",\n", pattern));
+            }
+            content.push_str("]\n");
+            content.push_str(&format!("prompt = \"\"\"\n{}\"\"\"\n", review.prompt));
+            content.push_str(&format!("priority = {}\n", review.priority));
+            content.push_str(&format!("enabled = {}\n", review.enabled));
+            content.push_str("\n");
+        }
+        
         fs::write(&config_file, content)?;
         
         Ok(())
@@ -155,6 +302,21 @@ impl ProjectConfig {
 ## 設定のカスタマイズ
 
 `config.toml`を編集して、レビューの内容や観点をカスタマイズできます。
+
+### 基本設定
+
+```toml
+# ファイル変更の検出間隔（秒）
+check_interval_secs = 60
+
+# Web UIのポート番号
+port = 38080
+
+# Ollama設定
+[ollama]
+base_url = "http://localhost:11434/v1"
+model = "gpt-oss:20b"
+```
 
 ### レビュー設定の例
 
